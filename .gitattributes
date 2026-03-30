@@ -1,0 +1,10 @@
+# Normalize text files in repository
+* text=auto
+
+# Keep source and config files with LF in working tree and repo
+*.c text eol=lf
+*.h text eol=lf
+*.pl0 text eol=lf
+*.in text eol=lf
+*.json text eol=lf
+*.md text eol=lf
