@@ -13,14 +13,14 @@ typedef enum {
 
 
 #define norw 13     /* 关键字个数 */
-#define txmax 100   /* 名字表容量 */
+#define txmax 100   /* 符号表容量 */
 #define nmax 14     /* number的最大位数 */
 #define al 10       /* 符号的最大长度 */
 #define amax 2047   /* 地址上界*/
 #define levmax 3    /* 最大允许过程嵌套声明层数 [0,  levmax]*/
 #define cxmax 500   /* 最多的虚拟机代码数 */
 
-/* 符号 */
+/* 符号：词法/语法符号枚举*/
 enum symbol {
     nul,         ident,     number,     plus,      minus,
     times,       slash,     oddsym,     eql,       neq,
@@ -32,7 +32,7 @@ enum symbol {
 };
 #define symnum 32
 
-/* 名字表中的类型 */
+/* 符号表中的类型 */
 enum object {
     constant,
     variable,
@@ -40,7 +40,7 @@ enum object {
     array       //add
 };
 
-/* 虚拟机代码 */
+/* 虚拟机代码：指令枚举 */
 enum fct {
     lit,     opr,     lod,
     sto,     cal,     inte,
@@ -48,7 +48,7 @@ enum fct {
 };
 #define fctnum 8
 
-/* 虚拟机代码结构 */
+/* 虚拟机代码结构：指令结构 */
 struct instruction
 {
     enum fct f; /* 虚拟机代码指令 */
@@ -56,12 +56,12 @@ struct instruction
     int a;      /* 根据f的不同而不同 */
 };
 
-FILE* fas;  /* 输出名字表 */
+FILE* fas;  /* 输出符号表 */
 FILE* fa;   /* 输出虚拟机代码 */
 FILE* fa1;  /* 输出源文件及其各行对应的首地址 */
 FILE* fa2;  /* 输出结果 */
 bool listswitch;    /* 显示虚拟机代码与否 */
-bool tableswitch;   /* 显示名字表与否 */
+bool tableswitch;   /* 显示符号表与否 */
 char ch;            /* 获取字符的缓冲区，getch 使用 */
 enum symbol sym;    /* 当前的符号 */
 char id[al+1];      /* 当前ident, 多出的一个字节用于存放0 */
@@ -79,7 +79,7 @@ bool declbegsys[symnum];    /* 表示声明开始的符号集合 */
 bool statbegsys[symnum];    /* 表示语句开始的符号集合 */
 bool facbegsys[symnum];     /* 表示因子开始的符号集合 */
 
-/* 名字表结构 */
+/* 符号表结构 */
 struct tablestruct
 {
     char name[al];      /* 名字 */
@@ -90,7 +90,7 @@ struct tablestruct
     int size;           /* 需要分配的数据区空间, 仅procedure使用 */
 };
 
-struct tablestruct table[txmax]; /* 名字表 */
+struct tablestruct table[txmax]; /* 符号表 */
 
 FILE* fin;
 FILE* fout;

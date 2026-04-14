@@ -7,11 +7,11 @@
  * 使用方法：
  * 运行后输入PL/0源程序文件名
  * 回答是否输出虚拟机代码？(Y/N)
- * 回答是否输出名字表？(Y/N)
+ * 回答是否输出符号表？(Y/N)
  * fa.tmp输出虚拟机代码
  * fa1.tmp输出源文件及其各行对应的首地址
  * fa2.tmp输出结果
- * fas.tmp输出名字表
+ * fas.tmp输出符号表
  */
 
 #include <stdio.h>
@@ -25,7 +25,8 @@
 
 int main()
 {
-	bool nxtlev[symnum];
+	// 用来存放当前语法分析阶段允许出现的后继符号。
+	bool nxtlev[symnum]; // 符号集合”缓冲区（长度是 symnum=32）
 
 	printf("Input pl/0 file?   ");
 	scanf("%s", fname);     /* 输入文件名 */
@@ -34,11 +35,11 @@ int main()
 
 	if (fin)
 	{
-		printf("List object code?(Y/N)");   /* 是否输出虚拟机代码 */
+		printf("List object code?(Y/N)");   /* 是否输出目标代码 */
 		scanf("%s", fname);
 		listswitch = (fname[0]=='y' || fname[0]=='Y');
 
-		printf("List symbol table?(Y/N)");  /* 是否输出名字表 */
+		printf("List symbol table?(Y/N)");  /* 是否输出符号表 */
 		scanf("%s", fname);
 		tableswitch = (fname[0]=='y' || fname[0]=='Y');
 
@@ -54,10 +55,10 @@ int main()
 
 		if(-1 != getsym())
 		{
-			fa = fopen("fa.tmp", "w");
-			fas = fopen("fas.tmp", "w");
-			addset(nxtlev, declbegsys, statbegsys, symnum);
-			nxtlev[period] = true;
+			fa = fopen("fa.tmp", "w");    // 用于输出目标代码
+			fas = fopen("fas.tmp", "w");  // 用于输出符号表
+			addset(nxtlev, declbegsys, statbegsys, symnum); // 声明开始符号和语句开始符号做并集
+			nxtlev[period] = true;  // 把程序结束符 .（period）设为合法
 
 			if(-1 == block(0, 0, nxtlev))   /* 调用编译程序 */
 			{
@@ -72,7 +73,7 @@ int main()
 			fclose(fa1);
 			fclose(fas);
 
-			if (sym != period)
+			if (sym != period)  
 			{
 				error(9);
 			}
@@ -423,6 +424,8 @@ int getsym()
 * x: instruction.f;
 * y: instruction.l;
 * z: instruction.a;
+f 是操作码，l 是层差（静态作用域要用），
+a 根据 f 不同可以是立即数、地址或者子操作码。
 */
 int gen(enum fct x, int y, int z )
 {
@@ -469,7 +472,7 @@ int test(bool* s1, bool* s2, int n)
 * 编译程序主体
 *
 * lev:    当前分程序所在层
-* tx:     名字表当前尾指针
+* tx:     符号表当前尾指针
 * fsys:   当前模块后跟符号集合
 */
 int block(int lev, int tx, bool* fsys)
@@ -478,16 +481,16 @@ int block(int lev, int tx, bool* fsys)
 
 	int dx;                 /* 名字分配到的相对地址 */
 	int tx0;                /* 保留初始tx */
-	int cx0;                /* 保留初始cx */
+	int cx0;                /* 保留初始cx  */
 	bool nxtlev[symnum];    /* 在下级函数的参数中，符号集合均为值参，但由于使用数组实现，
 							传递进来的是指针，为防止下级函数改变上级函数的集合，开辟新的空间
 							传递给下级函数*/
 
-	dx = 3;
+	dx = 3;					// 每个分程序的前3个地址分别存放静态链、动态链和返回地址
 	tx0 = tx;               /* 记录本层名字的初始位置 */
 	table[tx].adr = cx;
 
-	gendo(jmp, 0, 0);
+	gendo(jmp, 0, 0);    // 生成跳转指令，跳过声明部分，直接执行代码部分，等声明部分处理完了再回填地址
 
 	if (lev > levmax)
 	{
@@ -593,10 +596,10 @@ int block(int lev, int tx, bool* fsys)
 	code[table[tx0].adr].a = cx;    /* 开始生成当前过程代码 */
 	table[tx0].adr = cx;            /* 当前过程代码地址 */
 	table[tx0].size = dx;           /* 声明部分中每增加一条声明都会给dx增加1，声明部分已经结束，dx就是当前过程数据的size */
-	cx0 = cx;
+	cx0 = cx;                       // 虚拟机代码指针
 	gendo(inte, 0, dx);             /* 生成分配内存代码 */
 
-	if (tableswitch)        /* 输出名字表 */
+	if (tableswitch)        /* 输出符号表 */
 	{
 		printf("TABLE:\n");
 		if (tx0+1 > tx)
@@ -643,10 +646,10 @@ int block(int lev, int tx, bool* fsys)
 }
 
 /*
-* 在名字表中加入一项
+* 在符号表中加入一项
 *
 * k:      名字种类const,var or procedure
-* ptx:    名字表尾指针的指针，为了可以改变名字表尾指针的值
+* ptx:    符号表尾指针的指针，为了可以改变符号表尾指针的值
 * lev:    名字所在的层次,，以后所有的lev都是这样
 * pdx:    dx为当前应分配的变量的相对地址，分配后要增加1
 */
@@ -678,14 +681,15 @@ void enter(enum object k, int* ptx, int lev, int* pdx)
 
 /*
 * 查找名字的位置.
-* 找到则返回在名字表中的位置,否则返回0.
+* 找到则返回在符号表中的位置,否则返回0.
 *
 * idt:    要查找的名字
-* tx:     当前名字表尾指针
+* tx:     当前符号表尾指针
 */
 int position(char* idt, int tx)
 {
 	int i;
+	// 先把要找的名字放到 table[0]，这样搜索一定会停下来，不用额外判断边界。
 	strcpy(table[0].name, idt);
 	i = tx;
 	while (strcmp(table[i].name, idt) != 0)
@@ -739,7 +743,7 @@ int vardeclaration(int* ptx,int lev,int* pdx)
 {
 	if (sym == ident)
 	{
-		enter(variable, ptx, lev, pdx); // 填写名字表
+		enter(variable, ptx, lev, pdx); // 填写符号表
 		getsymdo;
 	}
 	else
@@ -1056,7 +1060,7 @@ int expression(bool* fsys, int* ptx, int lev)
 }
 
 /*
-* 项处理
+* 项处理:处理乘除
 */
 int term(bool* fsys, int* ptx, int lev)
 {
