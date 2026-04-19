@@ -19,6 +19,28 @@
 #include "pl0.h"
 #include "string.h"
 
+/*
+* ===================== 源码阅读导航（先看这个） =====================
+*
+* 这份文件可以按“编译前端 -> 代码生成 -> 虚拟机执行”三段来读：
+* 1) 词法: getch/getsym
+* 2) 语法+语义+生成: block/statement/expression/term/factor/condition + gen
+* 3) 解释执行: interpret/base
+*
+* 强烈建议按下面顺序阅读：
+* main -> init -> getsym -> block -> statement -> expression/term/factor -> condition -> interpret -> base
+*
+* 通读时优先盯住 6 个全局状态：
+* sym: 当前记号类型（语法分派开关）
+* id/num: 当前标识符或数字字面量
+* table/tx: 符号表及其尾指针
+* code/cx: 目标指令区及下一条可写位置
+* lev: 当前静态作用域层级
+* dx: 当前过程的数据区大小游标（从 3 开始，0/1/2 留给 SL/DL/RA）
+
+bool nxtlev[symnum] 等bool数组是把每个词法符号当作一个编号（0 到 symnum-1），数组下标就是符号编号，值 true/false 表示“这个符号是否属于该集合”
+*/
+
 /* 解释执行时使用的栈 */
 #define stacksize 500
 
@@ -443,12 +465,11 @@ int gen(enum fct x, int y, int z )
 
 
 /*
-* 测试当前符号是否合法
+* 测试当前符号是否合法，判错 + 跳到最近可继续的位置
 *
 * 在某一部分（如一条语句，一个表达式）将要结束时时我们希望下一个符号属于某集合
 * （该部分的后跟符号），test负责这项检测，并且负责当检测不通过时的补救措施，
-* 程序在需要检测时指定当前需要的符号集合和补救用的集合（如之前未完成部分的后跟
-* 符号），以及检测不通过时的错误号。
+   如果当前点已经错乱了，那至少要跳到一个上层还能接受的位置，程序才能继续分析。
 *
 * s1:   我们需要的符号
 * s2:   如果不是我们需要的，则需要一个补救用的集合
@@ -471,9 +492,9 @@ int test(bool* s1, bool* s2, int n)
 /*
 * 编译程序主体
 *
-* lev:    当前分程序所在层
-* tx:     符号表当前尾指针
-* fsys:   当前模块后跟符号集合
+* lev:    当前分程序所在层，告诉编译器“这个名字属于哪一层作用域”，以便正确处理访问和分配内存
+* tx:     符号表当前尾指针，每声明一个新名字（常量/变量/过程），都会在符号表新增一行，tx 往后走
+* fsys:   当前模块后的符号集合
 */
 int block(int lev, int tx, bool* fsys)
 {
@@ -482,11 +503,14 @@ int block(int lev, int tx, bool* fsys)
 	int dx;                 /* 名字分配到的相对地址 */
 	int tx0;                /* 保留初始tx */
 	int cx0;                /* 保留初始cx  */
-	bool nxtlev[symnum];    /* 在下级函数的参数中，符号集合均为值参，但由于使用数组实现，
-							传递进来的是指针，为防止下级函数改变上级函数的集合，开辟新的空间
-							传递给下级函数*/
+	bool nxtlev[symnum];    /* 当前允许出现的后继符号集合*/
 
-	dx = 3;					// 每个分程序的前3个地址分别存放静态链、动态链和返回地址
+	dx = 3;					/*每个分程序的前3个地址分别存放静态链、动态链和返回地址
+							SL，静态链 含义：指向“词法上外一层过程”的栈帧基址。 用途：访问外层变量。(写程序时就定)
+							DL，动态链 含义：指向"调用该过程"的栈帧基址。 用途：返回时恢复调用者环境。(执行时才知道)
+							RA，返回地址 含义：调用点之后下一条要执行的指令地址。 用途：返回时跳转到该地址继续执行。(执行时才知道)
+							*/
+
 	tx0 = tx;               /* 记录本层名字的初始位置 */
 	table[tx].adr = cx;
 
@@ -497,6 +521,11 @@ int block(int lev, int tx, bool* fsys)
 		error(32);
 	}
 
+	/*
+	 * 声明区循环，等价于：
+	 * [const 声明][var 声明]{procedure 声明}
+	 * 通过 sym 是否属于 declbegsys 决定是否继续吸收声明。
+	 */
 	do {
 
 		if (sym == constsym)    /* 收到常量声明符号，开始处理常量声明 */
@@ -506,10 +535,10 @@ int block(int lev, int tx, bool* fsys)
 			/* the original do...while(sym == ident) is problematic, thanks to calculous */
 			/* do { */
 			constdeclarationdo(&tx, lev, &dx);  /* dx的值会被constdeclaration改变，使用指针 */
-			while (sym == comma)
+			while (sym == comma)  // 只要后面还有逗号，就继续读后续常量项
 			{
 				getsymdo;
-				constdeclarationdo(&tx, lev, &dx);
+				constdeclarationdo(&tx, lev, &dx);  //  先吃掉逗号，再解析下一个 ident = number。
 			}
 			if (sym == semicolon)
 			{
@@ -521,7 +550,7 @@ int block(int lev, int tx, bool* fsys)
 			}
 			/* } while (sym == ident); */
 		}
-
+		// 为什么下面用第二个 if（不是 else if）：因为同一轮里能接着吃 var 声明
 		if (sym == varsym)      /* 收到变量声明符号，开始处理变量声明 */
 		{
 			getsymdo;
@@ -574,7 +603,7 @@ int block(int lev, int tx, bool* fsys)
 			{
 				return -1;  /* 递归调用 */
 			}
-
+			// 边界校验 + 出错恢复
 			if(sym == semicolon)
 			{
 				getsymdo;
@@ -588,15 +617,16 @@ int block(int lev, int tx, bool* fsys)
 				error(5);   /* 漏掉了分号 */
 			}
 		}
-		memcpy(nxtlev, statbegsys, sizeof(bool)*symnum);
-		nxtlev[ident] = true;
-		testdo(nxtlev, declbegsys, 7);
+		memcpy(nxtlev, statbegsys, sizeof(bool)*symnum);  // 先继承上层允许的后继符号, 出错时至少能回到“父层还能接受”的位置。
+		nxtlev[ident] = true;							// 再补本层额外合法符号, Follow(子结构)=Follow(父结构)∪本地分隔符
+		testdo(nxtlev, declbegsys, 7);					// 最后做校验与恢复, 如果当前符号既不是声明开始符号，也不是语句开始符号，则出错，并且不停获取符号直到它属于其中之一。
 	} while (inset(sym, declbegsys));   /* 直到没有声明符号 */
 
-	code[table[tx0].adr].a = cx;    /* 开始生成当前过程代码 */
-	table[tx0].adr = cx;            /* 当前过程代码地址 */
-	table[tx0].size = dx;           /* 声明部分中每增加一条声明都会给dx增加1，声明部分已经结束，dx就是当前过程数据的size */
-	cx0 = cx;                       // 虚拟机代码指针
+	/* 回填开头 jmp 的目标地址，使其跳过声明区，直接进入可执行语句区。 */
+	code[table[tx0].adr].a = cx;    /* 回填之前那条 jmp 的目标，让它跳到当前 cx（也就是语句区入口） */
+	table[tx0].adr = cx;            /* 把当前过程在符号表里的入口地址也记成 cx */
+	table[tx0].size = dx;           /* 记录这个过程总共需要的栈帧大小（含 SL/DL/RA + 局部变量） */
+	cx0 = cx;                       // 记住这一段代码的起点，后面用于 listcode 输出
 	gendo(inte, 0, dx);             /* 生成分配内存代码 */
 
 	if (tableswitch)        /* 输出符号表 */
@@ -634,10 +664,10 @@ int block(int lev, int tx, bool* fsys)
 	}
 
 	/* 语句后跟符号为分号或end */
-	memcpy(nxtlev, fsys, sizeof(bool)*symnum);  /* 每个后跟符号集和都包含上层后跟符号集和，以便补救 */
+	memcpy(nxtlev, fsys, sizeof(bool)*symnum);  /* 把上层允许的后继符号先拷过来，保证出错时还能同步回父层。 */
 	nxtlev[semicolon] = true;
 	nxtlev[endsym] = true;
-	statementdo(nxtlev, &tx, lev);
+	statementdo(nxtlev, &tx, lev);			// 真正去解析并生成“可执行语句部分”的代码。
 	gendo(opr, 0, 0);                       /* 每个过程出口都要使用的释放数据段指令 */
 	memset(nxtlev, 0, sizeof(bool)*symnum); /*分程序没有补救集合 */
 	testdo(fsys, nxtlev, 8);                /* 检测后跟符号正确性 */
@@ -647,7 +677,6 @@ int block(int lev, int tx, bool* fsys)
 
 /*
 * 在符号表中加入一项
-*
 * k:      名字种类const,var or procedure
 * ptx:    符号表尾指针的指针，为了可以改变符号表尾指针的值
 * lev:    名字所在的层次,，以后所有的lev都是这样
@@ -682,7 +711,6 @@ void enter(enum object k, int* ptx, int lev, int* pdx)
 /*
 * 查找名字的位置.
 * 找到则返回在符号表中的位置,否则返回0.
-*
 * idt:    要查找的名字
 * tx:     当前符号表尾指针
 */
@@ -704,6 +732,7 @@ int position(char* idt, int tx)
 */
 int constdeclaration(int* ptx, int lev, int* pdx)
 {
+	/* const 只写符号表的值域，不会像 var 一样消耗运行时地址槽位。 */
 	if (sym == ident)
 	{
 		getsymdo;
@@ -776,6 +805,13 @@ int statement(bool* fsys, int* ptx, int lev)
 {
 	int i, cx1, cx2;
 	bool nxtlev[symnum];
+
+	/*
+	 * 语句分派核心：根据当前 sym 进入不同分支。
+	 * 对应文法：
+	 * statement := ident:=... | read(...) | write(...) | call ident
+	 *            | if ... then ... | begin ... end | while ... do ...
+	 */
 
 	if (sym == ident)   /* 准备按照赋值语句处理 */
 	{
@@ -925,6 +961,7 @@ int statement(bool* fsys, int* ptx, int lev)
 					if (sym == ifsym)   /* 准备按照if语句处理 */
 					{
 						getsymdo;
+						// 用 memcpy 复制父层 fsys，再按当前语法补几个合法符号
 						memcpy(nxtlev, fsys, sizeof(bool)*symnum);
 						nxtlev[thensym] = true;
 						nxtlev[dosym] = true;   /* 后跟符号为then或do */
@@ -938,6 +975,7 @@ int statement(bool* fsys, int* ptx, int lev)
 							error(16);  /* 缺少then */
 						}
 						cx1 = cx;   /* 保存当前指令地址 */
+						/* 先占位一条 jpc，待 then 语句生成完后再回填跳转目标。 */
 						gendo(jpc, 0, 0);   /* 生成条件跳转指令，跳转地址未知，暂时写0 */
 						statementdo(fsys, ptx, lev);    /* 处理then后的语句 */
 						code[cx1].a = cx;   /* 经statement处理后，cx为then后语句执行完的位置，它正是前面未定的跳转地址 */
@@ -984,6 +1022,7 @@ int statement(bool* fsys, int* ptx, int lev)
 								nxtlev[dosym] = true;   /* 后跟符号为do */
 								conditiondo(nxtlev, ptx, lev);  /* 调用条件处理 */
 								cx2 = cx;   /* 保存循环体的结束的下一个位置 */
+								/* while 同样采用回填：条件假时跳出地址先写 0，循环体结束后再回填。 */
 								gendo(jpc, 0, 0);   /* 生成条件跳转，但跳出循环的地址未知 */
 								if (sym == dosym)
 								{
@@ -1018,6 +1057,7 @@ int expression(bool* fsys, int* ptx, int lev)
 {
 	enum symbol addop;  /* 用于保存正负号 */
 	bool nxtlev[symnum];
+	/* expression := [ + | - ] term { ( + | - ) term } */
 
 	if(sym==plus || sym==minus) /* 开头的正负号，此时当前表达式被看作一个正的或负的项 */
 	{
@@ -1066,6 +1106,7 @@ int term(bool* fsys, int* ptx, int lev)
 {
 	enum symbol mulop;  /* 用于保存乘除法符号 */
 	bool nxtlev[symnum];
+	/* term := factor { ( * | / ) factor } */
 
 	memcpy(nxtlev, fsys, sizeof(bool)*symnum);
 	nxtlev[times] = true;
@@ -1095,6 +1136,7 @@ int factor(bool* fsys, int* ptx, int lev)
 {
 	int i;
 	bool nxtlev[symnum];
+	/* factor := ident | number | '(' expression ')' */
 	testdo(facbegsys, fsys, 24);    /* 检测因子的开始符号 */
 	/* while(inset(sym, facbegsys)) */  /* 循环直到不是因子开始符号 */
 	if(inset(sym,facbegsys))    /* BUG: 原来的方法var1(var2+var3)会被错误识别为因子 */
@@ -1166,6 +1208,7 @@ int condition(bool* fsys, int* ptx, int lev)
 {
 	enum symbol relop;
 	bool nxtlev[symnum];
+	/* condition := odd expression | expression relop expression */
 
 	if(sym == oddsym)   /* 准备按照odd运算处理 */
 	{
@@ -1224,16 +1267,24 @@ int condition(bool* fsys, int* ptx, int lev)
 */
 void interpret()
 {
-	int p, b, t;    /* 指令指针，指令基址，栈顶指针 */
+	int p, b, t;    /* 指令指针，指令基址，下一空槽位指针 */
 	struct instruction i;   /* 存放当前指令 */
 	int s[stacksize];   /* 栈 */
+	/*
+	 * 栈帧布局（以 b 为当前过程基址）：
+	 * s[b+0] = 静态链 SL
+	 * s[b+1] = 动态链 DL
+	 * s[b+2] = 返回地址 RA
+	 * s[b+3...] = 局部数据区
+	 */
 
 	printf("start pl0\n");
 	t = 0;
 	b = 0;
 	p = 0;
 	s[0] = s[1] = s[2] = 0;
-	do {
+	do { // 这台虚拟机把 t 设计成“下一空槽位指针”，也就是栈顶元素的下一个位置，这样在执行入栈操作时就不需要先增加 t 了。
+		/* 取指 -> 译码 -> 执行 */
 		i = code[p];    /* 读当前指令 */
 		p++;
 		switch (i.f)
@@ -1242,19 +1293,19 @@ void interpret()
 			s[t] = i.a;
 			t++;
 			break;
-		case opr:   /* 数学、逻辑运算 */
+		case opr:   /* 按照a指定的操作进行数学、逻辑运算 */
 			switch (i.a)
 			{
-			case 0:
+			case 0:  // 过程返回（恢复 p、b）
 				t = b;
 				p = s[t+2];
 				b = s[t+1];
 				break;
-			case 1:
+			case 1:  // 取负
 				s[t-1] = -s[t-1];
 				break;
-			case 2:
-				t--;
+			case 2:  
+				t--;  // 二元运算前先把 t 减 1，这样 s[t] 就是右操作数，s[t-1] 是左操作数，结果直接覆盖 s[t-1]。
 				s[t-1] = s[t-1]+s[t];
 				break;
 			case 3:
@@ -1269,43 +1320,43 @@ void interpret()
 				t--;
 				s[t-1] = s[t-1]/s[t];
 				break;
-			case 6:
+			case 6:  // odd
 				s[t-1] = s[t-1]%2;
 				break;
-			case 8:
+			case 8:  // 等于eql
 				t--;
 				s[t-1] = (s[t-1] == s[t]);
 				break;
-			case 9:
+			case 9:  // 不等于neq
 				t--;
 				s[t-1] = (s[t-1] != s[t]);
 				break;
-			case 10:
+			case 10:  // 小于lss
 				t--;
 				s[t-1] = (s[t-1] < s[t]);
 				break;
-			case 11:
+			case 11:  // 大于等于geq
 				t--;
 				s[t-1] = (s[t-1] >= s[t]);
 				break;
-			case 12:
+			case 12:  // 大于gtr
 				t--;
 				s[t-1] = (s[t-1] > s[t]);
 				break;
-			case 13:
+			case 13:  // 小于等于leq
 				t--;
 				s[t-1] = (s[t-1] <= s[t]);
 				break;
-			case 14:
+			case 14:  // 输出栈顶的值
 				printf("%d", s[t-1]);
 				fprintf(fa2, "%d", s[t-1]);
 				t--;
 				break;
-			case 15:
+			case 15:  // 输出换行
 				printf("\n");
 				fprintf(fa2,"\n");
 				break;
-			case 16:
+			case 16:  // 从输入读一个数到栈顶
 				printf("?");
 				fprintf(fa2, "?");
 				scanf("%d", &(s[t]));
@@ -1322,20 +1373,20 @@ void interpret()
 			t--;
 			s[base(i.l, s, b) + i.a] = s[t];
 			break;
-		case cal:   /* 调用子过程 */
+		case cal:   /* cal l, a, 调用位于a的过程，层次差为l*/
 			s[t] = base(i.l, s, b); /* 将父过程基地址入栈 */
-			s[t+1] = b; /* 将本过程基地址入栈，此两项用于base函数 */
-			s[t+2] = p; /* 将当前指令指针入栈 */
-			b = t;  /* 改变基地址指针值为新过程的基地址 */
-			p = i.a;    /* 跳转 */
+			s[t+1] = b; 			/* 将本过程基地址入栈 */
+			s[t+2] = p; 			/* 将当前指令指针入栈 */
+			b = t;  				/* 改变基地址指针值为新过程的基地址 */
+			p = i.a;   				/* 跳到子过程入口地址 */
 			break;
-		case inte:  /* 分配内存 */
+		case inte:  /* inte 0, a：分配a个内存 */
 			t += i.a;
 			break;
-		case jmp:   /* 直接跳转 */
+		case jmp:   /* jmp 0, a：无条件跳转到a */
 			p = i.a;
 			break;
-		case jpc:   /* 条件跳转 */
+		case jpc:   /* jpc 0, a：条件跳转到a（当栈顶值为0时） */
 			t--;
 			if (s[t] == 0)
 			{
@@ -1346,16 +1397,15 @@ void interpret()
 	} while (p != 0);
 }
 
-/* 通过过程基址求上l层过程的基址 */
+/* 沿着静态链往外跳 l 层，找到目标作用域的基址。 */
 int base(int l, int* s, int b)
 {
 	int b1;
-	b1 = b;
+	b1 = b;  // 先把 b1 设为当前过程基址 b
 	while (l > 0)
 	{
-		b1 = s[b1];
+		b1 = s[b1];  // 沿着静态链向外跳一层，s[b1] 就是上一层过程的基址
 		l--;
 	}
 	return b1;
 }
-

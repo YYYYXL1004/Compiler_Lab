@@ -2,6 +2,32 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "Build pl0 (Debug)",
+            "type": "shell",
+            "command": "D:\\MinGW\\bin\\gcc.exe",
+            "args": [
+                "-fdiagnostics-color=always",
+                "-g",
+                "-O0",
+                "${workspaceFolder}\\c_base\\pl0.c",
+                "-o",
+                "${workspaceFolder}\\c_base\\pl0.exe"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "detail": "编译 PL/0 主程序（含调试信息，关闭优化）。"
+        },
+        {
             "type": "cppbuild",
             "label": "C/C++: 编译当前 C 文件",
             "command": "D:\\MinGW\\bin\\gcc.exe",

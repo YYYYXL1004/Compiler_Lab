@@ -29,7 +29,13 @@ enum symbol {
     beginsym,    endsym,    ifsym,      thensym,   whilesym,
     writesym,    readsym,   dosym,      callsym,   constsym,
     varsym,      procsym,
-};
+}; 
+// nul：空符号；ident：标识符，如变量名、过程名等；number：数字字面量；
+// plus、minus、times、slash + - * /
+// oddsym：odd运算符，判断表达式是否为奇数
+// eql neq lss leq gtr geq = # < <= > >=
+// lparen rparen comma semicolon period ( ) , ; .
+// becomes：赋值符号“:=”；beginsym、endsym等：保留字
 #define symnum 32
 
 /* 符号表中的类型 */
@@ -46,6 +52,10 @@ enum fct {
     sto,     cal,     inte,
     jmp,     jpc,
 };
+// lit 0, a：把a的值入栈；opr 0, a：执行a指定的运算；lod l, a：取相对地址为a、层次差为l的变量值入栈；
+// sto l, a：把栈顶值存到相对地址为a、层次差为l的变量；cal l, a：调用位于a的过程，层次差为l；inte 0, a：分配a个内存;
+// jmp 0, a：无条件跳转到a；jpc 0, a：条件跳转到a（当栈顶值为0时）
+
 #define fctnum 8
 
 /* 虚拟机代码结构：指令结构 */
@@ -97,6 +107,11 @@ FILE* fout;
 char fname[al];
 int err; /* 错误计数器 */
 
+/*
+ * 这些 *_do 宏用于统一 fatal error 传播：
+ * - 被调函数返回 -1 时，当前函数也立刻 return -1
+ * - 让递归下降中的错误处理路径保持一致
+ */
 /* 当函数中会发生fatal error时，返回-1告知调用它的函数，最终退出程序 */
 #define getsymdo                      if(-1 == getsym()) return -1
 #define getchdo                       if(-1 == getch()) return -1
