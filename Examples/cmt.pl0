@@ -1,0 +1,8 @@
+{ comment before program }
+const a=10;
+var b;
+begin
+    b:=a;
+    { comment in statement list }
+    write(b)
+end.

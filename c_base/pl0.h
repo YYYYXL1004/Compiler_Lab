@@ -12,7 +12,7 @@ typedef enum {
 } bool;
 
 
-#define norw 13     /* 关键字个数 */
+#define norw 14     /* 关键字个数 */
 #define txmax 100   /* 符号表容量 */
 #define nmax 14     /* number的最大位数 */
 #define al 10       /* 符号的最大长度 */
@@ -26,9 +26,10 @@ enum symbol {
     times,       slash,     oddsym,     eql,       neq,
     lss,         leq,       gtr,        geq,       lparen,
     rparen,      comma,     semicolon,  period,    becomes,
-    beginsym,    endsym,    ifsym,      thensym,   whilesym,
+    beginsym,    endsym,    ifsym,      thensym,   elsesym,
+    whilesym,
     writesym,    readsym,   dosym,      callsym,   constsym,
-    varsym,      procsym,
+    varsym,      procsym,   colon,
 }; 
 // nul：空符号；ident：标识符，如变量名、过程名等；number：数字字面量；
 // plus、minus、times、slash + - * /
@@ -36,7 +37,7 @@ enum symbol {
 // eql neq lss leq gtr geq = # < <= > >=
 // lparen rparen comma semicolon period ( ) , ; .
 // becomes：赋值符号“:=”；beginsym、endsym等：保留字
-#define symnum 32
+#define symnum 34
 
 /* 符号表中的类型 */
 enum object {
@@ -50,13 +51,14 @@ enum object {
 enum fct {
     lit,     opr,     lod,
     sto,     cal,     inte,
-    jmp,     jpc,
+    jmp,     jpc,     lda,
+    sta,
 };
 // lit 0, a：把a的值入栈；opr 0, a：执行a指定的运算；lod l, a：取相对地址为a、层次差为l的变量值入栈；
 // sto l, a：把栈顶值存到相对地址为a、层次差为l的变量；cal l, a：调用位于a的过程，层次差为l；inte 0, a：分配a个内存;
 // jmp 0, a：无条件跳转到a；jpc 0, a：条件跳转到a（当栈顶值为0时）
 
-#define fctnum 8
+#define fctnum 10
 
 /* 虚拟机代码结构：指令结构 */
 struct instruction
@@ -98,6 +100,8 @@ struct tablestruct
     int level;          /* 所处层，仅const不使用 */
     int adr;            /* 地址，仅const不使用 */
     int size;           /* 需要分配的数据区空间, 仅procedure使用 */
+    int low;            /* 数组下界，仅array使用 */
+    int high;           /* 数组上界，仅array使用 */
 };
 
 struct tablestruct table[txmax]; /* 符号表 */
@@ -145,6 +149,9 @@ int statement(bool* fsys, int* ptx, int lev);
 void listcode(int cx0);
 int vardeclaration(int* ptx, int lev, int* pdx);
 int constdeclaration(int* ptx, int lev, int* pdx);
+int arraybound(int* ptx, int* value);
+int arrayindex(int i, bool* fsys, int* ptx, int lev);
 int position(char* idt, int tx);
 void enter(enum object k, int* ptx, int lev, int* pdx);
+void enterarray(int* ptx, int lev, int* pdx, int low, int high);
 int base(int l, int* s, int b);
